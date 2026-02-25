@@ -30,7 +30,7 @@ def _default_checkpoint() -> str:
         ]
     )
     if not candidates:
-        return ""
+        return "Aratako/Irodori-TTS-500M"
     return str(candidates[-1])
 
 
@@ -266,7 +266,7 @@ def _run_generation(
     out_dir = Path("gradio_outputs")
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    out_path = save_wav(out_dir / f"sample_{stamp}.wav", result.audio, result.sample_rate)
+    out_path = save_wav(out_dir / f"sample_{stamp}.wav", result.audio.float(), result.sample_rate)
 
     runtime_msg = "runtime: reloaded" if reloaded else "runtime: reused"
     detail_lines = [
