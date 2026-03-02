@@ -95,8 +95,10 @@ uv run python infer.py \
 | `--ref-wav` | None | Reference audio for voice cloning |
 | `--ref-latent` | None | Pre-computed reference latent (.pt) |
 | `--no-ref` | False | Unconditional generation (no reference) |
-| `--ref-normalize-db` | None | Optional reference loudness target before DACVAE encode (e.g. `-16`) |
-| `--ref-ensure-max` | False | Scale reference down only when peak exceeds 1.0 after optional normalization |
+| `--ref-normalize-db` | -16.0 | Reference loudness target before DACVAE encode (set `none` to disable) |
+| `--ref-ensure-max` | True | Scale reference down only when peak exceeds 1.0 (used when `--ref-normalize-db` is disabled) |
+| `--codec-deterministic-encode` | True | Use deterministic DACVAE encode path |
+| `--codec-deterministic-decode` | True | Use deterministic DACVAE watermark-message decode path |
 | `--num-steps` | 40 | Number of Euler integration steps |
 | `--cfg-scale-text` | 3.0 | CFG scale for text conditioning |
 | `--cfg-scale-speaker` | 5.0 | CFG scale for speaker conditioning |

@@ -155,6 +155,8 @@ class RuntimeKey:
     model_precision: str = "fp32"
     codec_device: str = "cpu"
     codec_precision: str = "fp32"
+    codec_deterministic_encode: bool = True
+    codec_deterministic_decode: bool = True
     enable_watermark: bool = False
     compile_model: bool = False
     compile_dynamic: bool = False
@@ -166,8 +168,8 @@ class SamplingRequest:
     ref_wav: str | None = None
     ref_latent: str | None = None
     no_ref: bool = False
-    ref_normalize_db: float | None = None
-    ref_ensure_max: bool = False
+    ref_normalize_db: float | None = -16.0
+    ref_ensure_max: bool = True
     num_candidates: int = 1
     decode_mode: str = "sequential"
     seconds: float = 30.0
@@ -443,6 +445,8 @@ class InferenceRuntime:
             repo_id=key.codec_repo,
             device=str(codec_device),
             dtype=codec_dtype,
+            deterministic_encode=bool(key.codec_deterministic_encode),
+            deterministic_decode=bool(key.codec_deterministic_decode),
             enable_watermark=bool(key.enable_watermark),
         )
         if model_cfg.latent_dim != codec.latent_dim:
@@ -515,9 +519,9 @@ class InferenceRuntime:
                     wav = wav[:, :max_ref_samples]
             if req.ref_normalize_db is not None:
                 messages.append(
-                    f"info: reference loudness normalize enabled (target_db={float(req.ref_normalize_db):.2f})."
+                    f"info: reference loudness normalize enabled (target_db={float(req.ref_normalize_db):.2f}, includes peak safety scaling)."
                 )
-            if req.ref_ensure_max:
+            elif req.ref_ensure_max:
                 messages.append("info: reference peak safety scaling enabled (ensure_max=True).")
             ref_latent = self.codec.encode_waveform(
                 wav.unsqueeze(0),

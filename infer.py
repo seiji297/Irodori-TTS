@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
@@ -16,6 +17,21 @@ from irodori_tts.inference_runtime import (
 )
 
 FIXED_SECONDS = 30.0
+
+
+def _parse_optional_float(value: str) -> float | None:
+    raw = str(value).strip().lower()
+    if raw in {"none", "null", "off", "disable", "disabled"}:
+        return None
+    try:
+        out = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "Expected float or one of [none, null, off, disable, disabled]."
+        ) from exc
+    if not math.isfinite(out):
+        raise argparse.ArgumentTypeError(f"Expected finite float for value={value!r}.")
+    return out
 
 
 def _print_timings(timings: list[tuple[str, float]], total_to_decode: float) -> None:
@@ -89,6 +105,18 @@ def main() -> None:
         help="Codec precision for weights/compute.",
     )
     parser.add_argument(
+        "--codec-deterministic-encode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use deterministic DACVAE encode path (default: enabled).",
+    )
+    parser.add_argument(
+        "--codec-deterministic-decode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use deterministic DACVAE decode watermark-message path (default: enabled).",
+    )
+    parser.add_argument(
         "--enable-watermark",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -102,20 +130,21 @@ def main() -> None:
     )
     parser.add_argument(
         "--ref-normalize-db",
-        type=float,
-        default=None,
+        type=_parse_optional_float,
+        default=-16.0,
         help=(
-            "Optional target loudness (dB/LUFS-like) for reference audio before DACVAE encode "
-            "(e.g. -16.0). Disabled by default."
+            "Target loudness (dB/LUFS-like) for reference audio before DACVAE encode "
+            "(e.g. -16.0). Set to 'none' to disable. Default: -16."
         ),
     )
     parser.add_argument(
         "--ref-ensure-max",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help=(
             "Scale reference audio down only when peak exceeds 1.0 after optional loudness "
-            "normalization (DACVAE-like ensure_max behavior)."
+            "normalization. Effective only when --ref-normalize-db is none/null/off "
+            "(default: enabled)."
         ),
     )
     parser.add_argument("--codec-repo", default="facebook/dacvae-watermarked")
@@ -295,6 +324,8 @@ def main() -> None:
             model_precision=str(args.model_precision),
             codec_device=str(args.codec_device),
             codec_precision=str(args.codec_precision),
+            codec_deterministic_encode=bool(args.codec_deterministic_encode),
+            codec_deterministic_decode=bool(args.codec_deterministic_decode),
             enable_watermark=bool(args.enable_watermark),
             compile_model=bool(args.compile_model),
             compile_dynamic=bool(args.compile_dynamic),
@@ -307,9 +338,7 @@ def main() -> None:
             ref_wav=args.ref_wav,
             ref_latent=args.ref_latent,
             no_ref=bool(args.no_ref),
-            ref_normalize_db=None
-            if args.ref_normalize_db is None
-            else float(args.ref_normalize_db),
+            ref_normalize_db=args.ref_normalize_db,
             ref_ensure_max=bool(args.ref_ensure_max),
             num_candidates=int(args.num_candidates),
             decode_mode=str(args.decode_mode),
