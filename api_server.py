@@ -125,6 +125,7 @@ async def generate(req: GenerateRequest):
                         no_ref=True,
                         num_steps=50,
                         seconds=30.0,
+                        seed=42,
                     ),
                     log_fn=lambda msg: print(msg, flush=True),
                 )
