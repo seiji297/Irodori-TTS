@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+import secrets
 import subprocess
 import tempfile
 from contextlib import asynccontextmanager
@@ -25,11 +26,8 @@ from irodori_tts.inference_runtime import (
     default_runtime_device,
 )
 
-HF_REPO = "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
-DEFAULT_CAPTION = (
-    "非常に幼い女の子の声で、明るく元気いっぱいに、ハキハキと喋ってください。"
-    "声のトーンは高めで、可愛らしく、通る声でお願いします。"
-)
+HF_REPO = "Aratako/Irodori-TTS-500M-v2"
+REF_WAV = "/home/mnadmin/Irodori-TTS/input/mesugaki_001.wav"
 PORT = 50032
 
 _runtime: InferenceRuntime | None = None
@@ -53,7 +51,7 @@ async def lifespan(app: FastAPI):
             model_device=device,
             codec_device=device,
             model_precision="bf16" if device == "cuda" else "fp32",
-            codec_precision="fp32",
+            codec_precision="bf16" if device == "cuda" else "fp32",
         )
     )
     print("[api] Model loaded. Server ready.", flush=True)
@@ -101,7 +99,7 @@ def split_text(text: str, max_chars: int = 80) -> list[str]:
 
 class GenerateRequest(BaseModel):
     text: str = Field(..., max_length=2000)
-    caption: str | None = Field(None, max_length=500)
+    seed: int | None = Field(None, description="乱数シード。Noneの場合はランダム")
 
 
 @app.post("/generate")
@@ -109,10 +107,13 @@ async def generate(req: GenerateRequest):
     if _runtime is None or _lock is None:
         return Response(content="Model not loaded", status_code=503)
 
-    caption = req.caption if req.caption else DEFAULT_CAPTION
     chunks = split_text(req.text)
     if not chunks:
         return Response(content="Empty text", status_code=400)
+
+    # リクエスト単位でseedを1つ決定（全チャンク共通）
+    used_seed = req.seed if req.seed is not None else int(secrets.randbits(63))
+    print(f"[api] request seed: {used_seed}", flush=True)
 
     async with _lock:
         audio_segments: list[torch.Tensor] = []
@@ -123,11 +124,10 @@ async def generate(req: GenerateRequest):
                 result = _runtime.synthesize(
                     SamplingRequest(
                         text=chunk,
-                        caption=caption,
-                        no_ref=True,
+                        ref_wav=REF_WAV,
                         num_steps=50,
                         seconds=30.0,
-                        seed=42,
+                        seed=used_seed,
                     ),
                     log_fn=lambda msg: print(msg, flush=True),
                 )
