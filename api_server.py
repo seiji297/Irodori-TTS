@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+import subprocess
+import tempfile
 from contextlib import asynccontextmanager
 
 import numpy as np
@@ -162,7 +164,43 @@ async def generate(req: GenerateRequest):
         sf.write(buf, audio_np, sample_rate, format='WAV')
         buf.seek(0)
 
-    return Response(content=buf.read(), media_type="audio/wav")
+    # 1.2倍速変換（atempoフィルタ、pitch維持）
+    wav_bytes = _apply_atempo(buf.read(), speed=1.2)
+    return Response(content=wav_bytes, media_type="audio/wav")
+
+
+def _apply_atempo(wav_bytes: bytes, speed: float = 1.2) -> bytes:
+    """ffmpeg atempoフィルタで速度変換。失敗時は元データを返す。"""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fin:
+            fin.write(wav_bytes)
+            fin_path = fin.name
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fout:
+            fout_path = fout.name
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", fin_path,
+                "-filter:a", f"atempo={speed}",
+                "-ar", "24000",
+                fout_path,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            with open(fout_path, "rb") as f:
+                return f.read()
+        print(f"[api] ffmpeg atempo failed: {result.stderr[-200:]}", flush=True)
+    except Exception as exc:
+        print(f"[api] _apply_atempo error: {exc}", flush=True)
+    finally:
+        import os
+        for p in (fin_path, fout_path):
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+    return wav_bytes
 
 
 @app.get("/health")
