@@ -27,7 +27,7 @@ from irodori_tts.inference_runtime import (
 )
 
 HF_REPO = "Aratako/Irodori-TTS-500M-v2"
-REF_WAV = "/home/mnadmin/Irodori-TTS/input/mesugaki_001.wav"
+REF_WAV = "/home/mnadmin/Irodori-TTS/input/kiritan_002.wav"
 PORT = 50032
 
 _runtime: InferenceRuntime | None = None
