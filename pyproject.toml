@@ -23,6 +23,10 @@ dependencies = [
     "transformers<5",
     "tqdm>=4.67.3",
     "wandb>=0.17.0",
+    "fastapi>=0.129.2",
+    "uvicorn>=0.41.0",
+    "pydantic>=2.12.5",
+    "python-multipart>=0.0.22",
 ]
 
 [project.optional-dependencies]

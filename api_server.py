@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Irodori-TTS FastAPI server for AI agent TTS."""
+from __future__ import annotations
+
+import asyncio
+import io
+import re
+from contextlib import asynccontextmanager
+
+import numpy as np
+import soundfile as sf
+import torch
+import torchaudio
+from fastapi import FastAPI
+from fastapi.responses import Response
+from huggingface_hub import hf_hub_download
+from pydantic import BaseModel, Field
+
+from irodori_tts.inference_runtime import (
+    InferenceRuntime,
+    RuntimeKey,
+    SamplingRequest,
+    default_runtime_device,
+)
+
+HF_REPO = "Aratako/Irodori-TTS-500M-v2-VoiceDesign"
+DEFAULT_CAPTION = (
+    "非常に幼い女の子の声で、明るく元気いっぱいに、ハキハキと喋ってください。"
+    "声のトーンは高めで、可愛らしく、通る声でお願いします。"
+)
+PORT = 50032
+
+_runtime: InferenceRuntime | None = None
+_lock: asyncio.Lock | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _runtime, _lock
+    _lock = asyncio.Lock()
+
+    print("[api] Downloading checkpoint...", flush=True)
+    checkpoint_path = hf_hub_download(repo_id=HF_REPO, filename="model.safetensors")
+    print(f"[api] Checkpoint: {checkpoint_path}", flush=True)
+
+    device = default_runtime_device()
+    print(f"[api] Loading model on {device}...", flush=True)
+    _runtime = InferenceRuntime.from_key(
+        RuntimeKey(
+            checkpoint=checkpoint_path,
+            model_device=device,
+            codec_device=device,
+            model_precision="bf16" if device == "cuda" else "fp32",
+            codec_precision="fp32",
+        )
+    )
+    print("[api] Model loaded. Server ready.", flush=True)
+    yield
+    _runtime = None
+    _lock = None
+
+
+app = FastAPI(title="Irodori-TTS API", lifespan=lifespan)
+
+
+def split_text(text: str, max_chars: int = 80) -> list[str]:
+    """テキストをスマートチャンキングで分割する。
+
+    1. 句点（。！？\\n）で分割
+    2. max_chars超の文は読点（、）やカンマ（,）で再分割
+    3. strip()で空白除去、空文字除外
+    """
+    if not text or not text.strip():
+        return []
+
+    # Step 1: 句点・感嘆符・疑問符・改行で分割（区切り文字を保持）
+    primary_pattern = re.compile(r"(?<=[。！？\n])")
+    sentences = primary_pattern.split(text)
+
+    chunks: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        if len(sentence) <= max_chars:
+            chunks.append(sentence)
+        else:
+            # Step 2: 読点・カンマで再分割
+            secondary_pattern = re.compile(r"(?<=[、,])")
+            sub_sentences = secondary_pattern.split(sentence)
+            for sub in sub_sentences:
+                sub = sub.strip()
+                if sub:
+                    chunks.append(sub)
+
+    return chunks
+
+
+class GenerateRequest(BaseModel):
+    text: str = Field(..., max_length=2000)
+    caption: str | None = Field(None, max_length=500)
+
+
+@app.post("/generate")
+async def generate(req: GenerateRequest):
+    if _runtime is None or _lock is None:
+        return Response(content="Model not loaded", status_code=503)
+
+    caption = req.caption if req.caption else DEFAULT_CAPTION
+    chunks = split_text(req.text)
+    if not chunks:
+        return Response(content="Empty text", status_code=400)
+
+    async with _lock:
+        audio_segments: list[torch.Tensor] = []
+        sample_rate: int = 24000  # fallback
+
+        for chunk in chunks:
+            try:
+                result = _runtime.synthesize(
+                    SamplingRequest(
+                        text=chunk,
+                        caption=caption,
+                        no_ref=True,
+                        num_steps=50,
+                        seconds=30.0,
+                    ),
+                    log_fn=lambda msg: print(msg, flush=True),
+                )
+            except Exception as exc:
+                print(f"[api] synthesize failed: {exc}", flush=True)
+                return Response(content="Internal inference error", status_code=500)
+            audio_segments.append(result.audio)
+            sample_rate = result.sample_rate
+
+        # チャンク間に0.3秒無音を挿入して結合
+        silence_frames = int(sample_rate * 0.3)
+        # result.audio shape: (channels, samples) or (samples,)
+        if audio_segments[0].dim() == 1:
+            silence = torch.zeros(silence_frames)
+        else:
+            channels = audio_segments[0].shape[0]
+            silence = torch.zeros(channels, silence_frames)
+
+        merged_parts: list[torch.Tensor] = []
+        for i, seg in enumerate(audio_segments):
+            merged_parts.append(seg)
+            if i < len(audio_segments) - 1:
+                merged_parts.append(silence)
+
+        dim = 0 if audio_segments[0].dim() == 1 else 1
+        merged = torch.cat(merged_parts, dim=dim)
+
+        # 1次元の場合はtorchaudioのため2次元に変換
+        if merged.dim() == 1:
+            merged = merged.unsqueeze(0)
+
+        buf = io.BytesIO()
+        audio_np = merged.cpu().numpy().T if merged.dim() > 1 else merged.cpu().numpy()
+        sf.write(buf, audio_np, sample_rate, format='WAV')
+        buf.seek(0)
+
+    return Response(content=buf.read(), media_type="audio/wav")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "model_loaded": _runtime is not None}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=PORT)
