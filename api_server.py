@@ -160,7 +160,7 @@ async def generate(req: GenerateRequest):
             merged = merged.unsqueeze(0)
 
         buf = io.BytesIO()
-        audio_np = merged.cpu().numpy().T if merged.dim() > 1 else merged.cpu().numpy()
+        audio_np = merged.float().cpu().numpy().T if merged.dim() > 1 else merged.float().cpu().numpy()
         sf.write(buf, audio_np, sample_rate, format='WAV')
         buf.seek(0)
 
