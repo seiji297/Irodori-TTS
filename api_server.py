@@ -164,33 +164,15 @@ async def generate(req: GenerateRequest):
         sf.write(buf, audio_np, sample_rate, format='WAV')
         buf.seek(0)
 
-    # 速度1.2倍 + 音程0.95倍（asetrate+atempoで音程のみ調整、速度は1.2倍維持）
-    wav_bytes = _apply_pitch_and_speed(buf.read(), pitch=0.95, speed=1.2)
+    # 1.2倍速変換（atempoフィルタ、pitch維持）
+    wav_bytes = _apply_atempo(buf.read(), speed=1.2)
     return Response(content=wav_bytes, media_type="audio/wav")
 
 
-def _apply_pitch_and_speed(wav_bytes: bytes, pitch: float = 0.95, speed: float = 1.2) -> bytes:
-    """ffmpeg asetrate+atempoで音程とスピードを個別に調整。失敗時は元データを返す。
-    pitch: 音程倍率（0.95=5%低く）
-    speed: 速度倍率（1.2=1.2倍速）
-    """
+def _apply_atempo(wav_bytes: bytes, speed: float = 1.2) -> bytes:
+    """ffmpeg atempoフィルタで速度変換。失敗時は元データを返す。"""
     try:
-        sr = 24000
-        # asetrate でピッチを変える → atempoで速度を補正
-        # aresampleはフィルターチェーンに入れず、出力オプション -ar で処理する
-        # 最終速度 = speed になるよう atempo = speed / pitch
-        atempo = speed / pitch
-        # atempoの範囲制限: 0.5〜2.0。範囲外なら複数atempo連結
-        filter_parts = [f"asetrate={int(sr * pitch)}"]
-        remaining = atempo
-        while remaining > 2.0:
-            filter_parts.append("atempo=2.0")
-            remaining /= 2.0
-        while remaining < 0.5:
-            filter_parts.append("atempo=0.5")
-            remaining /= 0.5
-        filter_parts.append(f"atempo={remaining:.4f}")
-        audio_filter = ",".join(filter_parts)
+        audio_filter = f"atempo={speed}"
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fin:
             fin.write(wav_bytes)
@@ -201,7 +183,7 @@ def _apply_pitch_and_speed(wav_bytes: bytes, pitch: float = 0.95, speed: float =
             [
                 "ffmpeg", "-y", "-i", fin_path,
                 "-filter:a", audio_filter,
-                "-ar", str(sr),
+                "-ar", "24000",
                 fout_path,
             ],
             capture_output=True,
@@ -210,9 +192,9 @@ def _apply_pitch_and_speed(wav_bytes: bytes, pitch: float = 0.95, speed: float =
         if result.returncode == 0:
             with open(fout_path, "rb") as f:
                 return f.read()
-        print(f"[api] ffmpeg pitch+speed failed: {result.stderr[-200:]}", flush=True)
+        print(f"[api] ffmpeg atempo failed: {result.stderr[-200:]}", flush=True)
     except Exception as exc:
-        print(f"[api] _apply_pitch_and_speed error: {exc}", flush=True)
+        print(f"[api] _apply_atempo error: {exc}", flush=True)
     finally:
         import os
         for p in (fin_path, fout_path):
