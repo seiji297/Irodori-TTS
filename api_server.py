@@ -176,11 +176,12 @@ def _apply_pitch_and_speed(wav_bytes: bytes, pitch: float = 0.95, speed: float =
     """
     try:
         sr = 24000
-        # asetrate でピッチを変える（速度も変わる）→ atempoで速度を補正 → aresampleで元レートに戻す
+        # asetrate でピッチを変える → atempoで速度を補正
+        # aresampleはフィルターチェーンに入れず、出力オプション -ar で処理する
         # 最終速度 = speed になるよう atempo = speed / pitch
         atempo = speed / pitch
-        # atempoの範囲制限: 0.5〜100。範囲外なら複数atempo連結
-        filter_parts = [f"asetrate={sr}*{pitch}"]
+        # atempoの範囲制限: 0.5〜2.0。範囲外なら複数atempo連結
+        filter_parts = [f"asetrate={int(sr * pitch)}"]
         remaining = atempo
         while remaining > 2.0:
             filter_parts.append("atempo=2.0")
@@ -189,7 +190,6 @@ def _apply_pitch_and_speed(wav_bytes: bytes, pitch: float = 0.95, speed: float =
             filter_parts.append("atempo=0.5")
             remaining /= 0.5
         filter_parts.append(f"atempo={remaining:.4f}")
-        filter_parts.append(f"aresample={sr}")
         audio_filter = ",".join(filter_parts)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fin:
