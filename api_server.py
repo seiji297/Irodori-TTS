@@ -125,7 +125,6 @@ async def generate(req: GenerateRequest):
                     SamplingRequest(
                         text=chunk,
                         ref_wav=REF_WAV,
-                        caption="非常に高いトーンの声で、キャラクターらしく明るく元気に喋ってください。声は高めで可愛らしく、はっきりとした発音でお願いします。",
                         num_steps=20,
                         seconds=10.0,
                         seed=used_seed,
